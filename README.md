@@ -41,7 +41,7 @@ pip install -e ".[dev]"
 
 ```text
 GEMINI_API_KEY=your_key_here
-GEMINI_MODEL=gemini-2.5-flash-lite
+GEMINI_MODEL=gemini-3.1-flash-lite
 ```
 
 Запуск із дефолтними шляхами:
@@ -52,6 +52,10 @@ python -m request_triage
 
 За замовчуванням LLM-запити виконуються асинхронно з максимум 4 одночасними
 викликами. Ліміт можна змінити через `TRIAGE_CONCURRENCY` або `--concurrency`.
+Transient API-помилки та rate limit (429/5xx) повторюються з exponential
+backoff, jitter і підтримкою `Retry-After`. Параметри задаються через
+`RETRY_ATTEMPTS`, `RETRY_BASE_DELAY_SECONDS`, `RETRY_MAX_DELAY_SECONDS` або
+відповідні CLI-прапорці.
 
 Або явно:
 
@@ -70,7 +74,7 @@ python -m request_triage --input input_requests.csv --output output.json --repor
 {
   "schema_version": "1.0",
   "source_file": "input_requests.csv",
-  "model": "gemini-2.5-flash-lite",
+  "model": "gemini-3.1-flash-lite",
   "total_requests": 18,
   "requests": [
     {
@@ -94,6 +98,17 @@ python -m request_triage --input input_requests.csv --output output.json --repor
 
 `report.md` містить кількість запитів за категоріями, пріоритетами й відділами,
 а також окремі списки запитів для уточнення та технічних помилок.
+
+Checkpoint/resume для довгих batch:
+
+```powershell
+python -m request_triage --checkpoint artifacts/triage.checkpoint.json
+python -m request_triage --checkpoint artifacts/triage.checkpoint.json --resume
+```
+
+Checkpoint зберігається атомарно після кожного завершеного рядка й прив'язаний
+до fingerprint вхідних даних, source-файлу та моделі. При зміні input або model
+resume зупиняється з помилкою, щоб не змішати результати різних запусків.
 
 ## Optional integrations
 
@@ -137,21 +152,34 @@ enum-значення, типи та обов'язкові поля переві
 
 ## Тести
 
-Тести не викликають Gemini: використовують mock-клієнт, тому їх можна запускати
-без ключа.
+Звичайні тести не викликають зовнішні API: використовують mock-клієнти, тому їх
+можна запускати без ключа.
 
 ```powershell
 pytest -q
 ```
 
+Live-тести мають явний opt-in, щоб випадково не витратити квоту й не писати у
+зовнішні системи:
+
+```powershell
+$env:RUN_LIVE_INTEGRATION_TESTS="1"
+pytest -m live -q
+```
+
+Gemini-тест використовує `GEMINI_API_KEY` і робить один реальний запит.
+Google Sheets і Telegram-тести додатково запускаються лише коли задані їхні
+credentials та target-конфігурація.
+
 ## Обмеження та наступні кроки
 
-- Async batch уже реалізований із bounded concurrency та збереженням порядку
-  вхідних рядків. Для сотень/тисяч рядків додав би rate-limit/backoff,
-  checkpointing і resume з незавершеного batch.
-- Один запит = один LLM-виклик, плюс повторна спроба при помилці. Це збільшує
-  latency і token cost; у production потрібні ліміти, метрики та оцінка вартості
-  до запуску.
+- Async batch, bounded concurrency, rate-limit/backoff і checkpoint/resume вже
+  реалізовані. Для сотень/тисяч рядків додав би зовнішнє сховище checkpoint,
+  distributed lock та окрему чергу задач.
+- Один успішний запит = один LLM-виклик; невалідний structured output може
+  спричинити semantic retry, а transient API failure — transport retry. Це
+  збільшує latency і token cost; у production потрібні метрики та оцінка
+  вартості до запуску.
 - `temperature=0` зменшує, але не усуває недетермінізм. Для стабільності можна
   додати golden-набір, періодичну ручну оцінку, кешування за hash вхідного тексту
   та version pinning моделі.
@@ -159,10 +187,9 @@ pytest -q
   окремих відповідей не зупиняють batch і явно потрапляють у JSON/report.
 - CSV перевіряється до викликів LLM, але timestamp наразі зберігається як рядок,
   бо застосунок не виконує часових розрахунків.
-- Далі додав би Google Sheets/Telegram-інтеграцію, async batch, Docker-образ,
-  structured logging, prompt/version metadata та human-in-the-loop для low
-  confidence або `needs_clarification=true`. Google Sheets, Telegram і Docker
-  уже доступні як optional integrations.
+- Далі додав би structured logging, prompt/version metadata, зовнішнє сховище
+  checkpoint і human-in-the-loop для low confidence або
+  `needs_clarification=true`.
 
 ## Docker
 
@@ -189,6 +216,8 @@ docker run --rm --env-file .env `
 ```text
 src/request_triage/
   classifier.py   # prompt, parsing, retry та per-row error isolation
+  resilience.py   # rate-limit detection, retry/backoff and jitter
+  checkpoint.py   # atomic checkpoint/resume storage
   csv_io.py       # читання і валідація CSV
   llm.py          # маленький Gemini adapter + testable protocol
   models.py       # Pydantic contracts

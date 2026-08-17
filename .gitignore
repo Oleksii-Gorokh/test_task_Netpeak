@@ -11,5 +11,7 @@ build/
 output.json
 report.md
 artifacts/
+checkpoint.json
+*.checkpoint.json
 coverage.xml
 .coverage
