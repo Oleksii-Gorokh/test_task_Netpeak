@@ -10,6 +10,6 @@ build/
 *.egg-info/
 output.json
 report.md
+artifacts/
 coverage.xml
 .coverage
-

@@ -7,10 +7,15 @@ dependencies = [
   "google-genai>=1.30,<2",
   "pydantic>=2.7,<3",
   "python-dotenv>=1.0,<2",
+  "google-auth>=2.0,<3",
+  "httpx>=0.28,<1",
 ]
 
 [project.scripts]
 request-triage = "request_triage.cli:main"
+
+[project.optional-dependencies]
+dev = ["pytest>=8,<9"]
 
 [tool.pytest.ini_options]
 pythonpath = ["src"]

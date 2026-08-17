@@ -31,6 +31,12 @@ pip install -e .
 Copy-Item .env.example .env
 ```
 
+Для запуску тестів замість цього можна встановити dev-залежності:
+
+```powershell
+pip install -e ".[dev]"
+```
+
 У `.env` додайте ключ Gemini:
 
 ```text
@@ -43,6 +49,9 @@ GEMINI_MODEL=gemini-2.5-flash-lite
 ```powershell
 python -m request_triage
 ```
+
+За замовчуванням LLM-запити виконуються асинхронно з максимум 4 одночасними
+викликами. Ліміт можна змінити через `TRIAGE_CONCURRENCY` або `--concurrency`.
 
 Або явно:
 
@@ -86,6 +95,37 @@ python -m request_triage --input input_requests.csv --output output.json --repor
 `report.md` містить кількість запитів за категоріями, пріоритетами й відділами,
 а також окремі списки запитів для уточнення та технічних помилок.
 
+## Optional integrations
+
+### Google Sheets
+
+Потрібен Google Cloud service account із увімкненим Sheets API. Поділіться
+цільовою таблицею з e-mail service account і вкажіть її ID та шлях до JSON-файлу
+в `.env`. Застосунок очищує діапазон `A:M` у вказаній вкладці й записує повний
+поточний snapshot через `spreadsheets.values.update`.
+
+```powershell
+python -m request_triage --google-sheet
+```
+
+Альтернатива файлу — `GOOGLE_SERVICE_ACCOUNT_JSON` із повним JSON у змінній
+оточення. У репозиторій credentials не додаються.
+
+### Telegram
+
+Створіть бота через BotFather, додайте його в потрібний чат і задайте
+`TELEGRAM_BOT_TOKEN` та `TELEGRAM_CHAT_ID`. Дайджест надсилається через
+`sendMessage`; довгі повідомлення автоматично розбиваються на частини.
+
+```powershell
+python -m request_triage --telegram
+```
+
+Інтеграції запускаються лише за відповідними прапорцями, тому базовий запуск
+не потребує Google або Telegram credentials. Якщо прапорець увімкнено, але
+конфігурація неповна або API повертає помилку, команда завершується з помилкою
+після того, як локальні `output.json` та `report.md` уже збережені.
+
 ## Як валідується LLM-вивід
 
 Gemini отримує JSON structured-output конфігурацію з Pydantic-схемою. Після
@@ -106,8 +146,9 @@ pytest -q
 
 ## Обмеження та наступні кроки
 
-- Обробка зараз послідовна. Для сотень/тисяч рядків варто додати bounded async
-  concurrency, rate-limit/backoff, checkpointing і resume з незавершеного batch.
+- Async batch уже реалізований із bounded concurrency та збереженням порядку
+  вхідних рядків. Для сотень/тисяч рядків додав би rate-limit/backoff,
+  checkpointing і resume з незавершеного batch.
 - Один запит = один LLM-виклик, плюс повторна спроба при помилці. Це збільшує
   latency і token cost; у production потрібні ліміти, метрики та оцінка вартості
   до запуску.
@@ -120,7 +161,28 @@ pytest -q
   бо застосунок не виконує часових розрахунків.
 - Далі додав би Google Sheets/Telegram-інтеграцію, async batch, Docker-образ,
   structured logging, prompt/version metadata та human-in-the-loop для low
-  confidence або `needs_clarification=true`.
+  confidence або `needs_clarification=true`. Google Sheets, Telegram і Docker
+  уже доступні як optional integrations.
+
+## Docker
+
+Збірка образу:
+
+```powershell
+docker build -t request-triage .
+```
+
+Запуск із `.env` та локальним CSV:
+
+```powershell
+docker run --rm --env-file .env `
+  -v "${PWD}/input_requests.csv:/app/input_requests.csv:ro" `
+  -v "${PWD}/artifacts:/app/artifacts" `
+  request-triage --output /app/artifacts/output.json --report /app/artifacts/report.md
+```
+
+Для Google Sheets у контейнері передайте `GOOGLE_SERVICE_ACCOUNT_JSON` або
+змонтуйте credentials-файл і вкажіть шлях через `GOOGLE_SERVICE_ACCOUNT_FILE`.
 
 ## Структура
 
@@ -130,9 +192,10 @@ src/request_triage/
   csv_io.py       # читання і валідація CSV
   llm.py          # маленький Gemini adapter + testable protocol
   models.py       # Pydantic contracts
-  pipeline.py     # обробка batch у порядку вхідних рядків
+  pipeline.py     # sync/async batch із bounded concurrency
   reporting.py    # output.json та report.md
+  sheets.py       # optional Google Sheets exporter
+  telegram.py     # optional Telegram digest
   cli.py          # CLI та env-конфігурація
 tests/            # offline unit tests
 ```
-
