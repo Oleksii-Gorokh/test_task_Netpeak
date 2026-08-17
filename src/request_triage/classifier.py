@@ -68,6 +68,9 @@ def classify_request(
 ) -> ClassifiedRequest:
     """Classify one row; isolate failures so the rest of the batch can finish."""
 
+    if max_attempts < 1:
+        raise ValueError("max_attempts must be at least 1")
+
     last_error = "unknown classification error"
     for attempt in range(max_attempts):
         try:
@@ -95,4 +98,3 @@ def classify_request(
         processing_status="error",
         error=f"classification failed after {max_attempts} attempt(s): {last_error}",
     )
-
