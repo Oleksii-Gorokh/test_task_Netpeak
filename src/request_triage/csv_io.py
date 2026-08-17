@@ -25,11 +25,17 @@ def read_requests(path: str | Path) -> list[RequestInput]:
             )
 
         requests: list[RequestInput] = []
+        seen_ids: set[str] = set()
         for row_number, row in enumerate(reader, start=2):
             try:
-                requests.append(RequestInput.model_validate({key: row.get(key) for key in REQUIRED_COLUMNS}))
+                request = RequestInput.model_validate(
+                    {key: row.get(key) for key in REQUIRED_COLUMNS}
+                )
             except ValidationError as exc:
                 raise ValueError(f"Invalid CSV row {row_number}: {exc}") from exc
+            if request.id in seen_ids:
+                raise ValueError(f"Duplicate request id on CSV row {row_number}: {request.id}")
+            seen_ids.add(request.id)
+            requests.append(request)
 
     return requests
-

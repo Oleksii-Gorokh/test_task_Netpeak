@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 from collections.abc import Callable
 
+from .checkpoint import CheckpointStore
 from .classifier import classify_request
 from .llm import LLMClient
 from .models import ClassifiedRequest, OutputDocument, RequestInput
@@ -12,16 +13,36 @@ from .reporting import build_output, write_output, write_report
 def classify_all(
     requests: list[RequestInput], client: LLMClient, max_attempts: int = 2,
     progress: Callable[[int, int], None] | None = None,
+    checkpoint_path: str | None = None,
+    source_file: str = "",
+    model: str = "",
+    resume: bool = False,
 ) -> list[ClassifiedRequest]:
-    """Run the batch sequentially, preserving input order and isolating rows."""
+    """Run the batch, optionally persisting each result for later resume."""
 
-    classified: list[ClassifiedRequest] = []
+    checkpoint = (
+        CheckpointStore(checkpoint_path, requests, source_file, model, resume)
+        if checkpoint_path
+        else None
+    )
+    results = checkpoint.results.copy() if checkpoint else {}
+    pending = [
+        request for request in requests
+        if not checkpoint or request.id not in checkpoint.successful_ids
+    ]
     total = len(requests)
-    for index, request in enumerate(requests, start=1):
-        classified.append(classify_request(request, client, max_attempts=max_attempts))
+    completed = len(results)
+    if progress and completed:
+        progress(completed, total)
+    for request in pending:
+        result = classify_request(request, client, max_attempts=max_attempts)
+        results[request.id] = result
+        if checkpoint:
+            checkpoint.save(result)
+        completed += 1
         if progress:
-            progress(index, total)
-    return classified
+            progress(completed, total)
+    return [results[request.id] for request in requests]
 
 
 async def classify_all_async(
@@ -30,6 +51,10 @@ async def classify_all_async(
     max_attempts: int = 2,
     concurrency: int = 4,
     progress: Callable[[int, int], None] | None = None,
+    checkpoint_path: str | None = None,
+    source_file: str = "",
+    model: str = "",
+    resume: bool = False,
 ) -> list[ClassifiedRequest]:
     """Classify concurrently with a bounded number of in-flight LLM calls."""
 
@@ -37,8 +62,20 @@ async def classify_all_async(
         raise ValueError("concurrency must be at least 1")
 
     semaphore = asyncio.Semaphore(concurrency)
-    completed = 0
+    checkpoint = (
+        CheckpointStore(checkpoint_path, requests, source_file, model, resume)
+        if checkpoint_path
+        else None
+    )
+    results = checkpoint.results.copy() if checkpoint else {}
+    pending = [
+        request for request in requests
+        if not checkpoint or request.id not in checkpoint.successful_ids
+    ]
+    completed = len(results)
     total = len(requests)
+    if progress and completed:
+        progress(completed, total)
 
     async def classify_one(request: RequestInput) -> ClassifiedRequest:
         nonlocal completed
@@ -46,13 +83,17 @@ async def classify_all_async(
             result = await asyncio.to_thread(
                 classify_request, request, client, max_attempts
             )
+        results[request.id] = result
+        if checkpoint:
+            checkpoint.save(result)
         completed += 1
         if progress:
             progress(completed, total)
         return result
 
     # asyncio.gather returns in input order even when workers finish out of order.
-    return await asyncio.gather(*(classify_one(request) for request in requests))
+    await asyncio.gather(*(classify_one(request) for request in pending))
+    return [results[request.id] for request in requests]
 
 
 def run_pipeline(
@@ -81,6 +122,8 @@ async def run_pipeline_async(
     max_attempts: int = 2,
     concurrency: int = 4,
     progress: Callable[[int, int], None] | None = None,
+    checkpoint_path: str | None = None,
+    resume: bool = False,
 ) -> OutputDocument:
     classified = await classify_all_async(
         requests,
@@ -88,6 +131,10 @@ async def run_pipeline_async(
         max_attempts=max_attempts,
         concurrency=concurrency,
         progress=progress,
+        checkpoint_path=checkpoint_path,
+        source_file=source_file,
+        model=model,
+        resume=resume,
     )
     document = build_output(classified, source_file=source_file, model=model)
     write_output(document, output_path)

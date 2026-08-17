@@ -1,6 +1,7 @@
 import json
 
 from request_triage.classifier import classify_request, parse_classification
+from request_triage.llm import gemini_classification_schema
 from request_triage.models import RequestInput
 
 
@@ -47,6 +48,14 @@ def test_parse_classification_rejects_invalid_enum():
         raise AssertionError("invalid priority should fail validation")
 
 
+def test_gemini_schema_is_json_schema():
+    schema = gemini_classification_schema()
+
+    assert schema["type"] == "object"
+    assert "additionalProperties" in schema
+    assert "anyOf" in json.dumps(schema)
+
+
 def test_classifier_retries_invalid_json_and_returns_valid_result():
     client = SequenceClient(["not json", json.dumps(valid_payload(), ensure_ascii=False)])
 
@@ -67,4 +76,3 @@ def test_classifier_isolates_permanent_failure():
     assert result.category is None
     assert result.error is not None
     assert client.calls == 2
-

@@ -7,6 +7,7 @@ from typing import Any
 from urllib.parse import quote
 
 from .models import OutputDocument
+from .resilience import RetryPolicy, retry_sync
 
 
 SHEETS_SCOPE = "https://www.googleapis.com/auth/spreadsheets"
@@ -88,11 +89,13 @@ class GoogleSheetsExporter:
         credentials_file: str | Path | None = None,
         credentials_json: str | None = None,
         session: Any | None = None,
+        retry_policy: RetryPolicy | None = None,
     ) -> None:
         if not spreadsheet_id:
             raise ValueError("spreadsheet_id is required")
         self.spreadsheet_id = spreadsheet_id
         self.tab_name = tab_name
+        self.retry_policy = retry_policy or RetryPolicy()
         if session is None:
             from google.auth.transport.requests import AuthorizedSession
 
@@ -112,19 +115,26 @@ class GoogleSheetsExporter:
 
     def export(self, document: OutputDocument) -> int:
         rows = sheet_rows(document)
+        clear_response = retry_sync(
+            lambda: self.session.post(self._url(f"{self.tab_name}!A:M:clear"), timeout=30),
+            self.retry_policy,
+        )
         self._check(
-            self.session.post(self._url(f"{self.tab_name}!A:M:clear"), timeout=30),
+            clear_response,
             "clear",
         )
-        response = self.session.put(
-            self._url(f"{self.tab_name}!A1"),
-            params={"valueInputOption": "RAW"},
-            json={
-                "range": f"{self.tab_name}!A1",
-                "majorDimension": "ROWS",
-                "values": rows,
-            },
-            timeout=30,
+        response = retry_sync(
+            lambda: self.session.put(
+                self._url(f"{self.tab_name}!A1"),
+                params={"valueInputOption": "RAW"},
+                json={
+                    "range": f"{self.tab_name}!A1",
+                    "majorDimension": "ROWS",
+                    "values": rows,
+                },
+                timeout=30,
+            ),
+            self.retry_policy,
         )
         self._check(response, "update")
         return len(rows) - 1

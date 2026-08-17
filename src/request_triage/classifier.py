@@ -7,6 +7,7 @@ from pydantic import ValidationError
 
 from .llm import LLMClient
 from .models import ClassifiedRequest, Classification, RequestInput
+from .resilience import is_retryable_exception
 
 
 SYSTEM_INSTRUCTIONS = """Ти класифікуєш внутрішні запити українськомовної команди AI.
@@ -85,6 +86,8 @@ def classify_request(
             )
         except Exception as exc:  # noqa: BLE001 - per-row isolation is intentional.
             last_error = str(exc)
+            if is_retryable_exception(exc):
+                break
 
     return ClassifiedRequest(
         **request.model_dump(),

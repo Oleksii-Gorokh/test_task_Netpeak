@@ -3,6 +3,13 @@ from __future__ import annotations
 from typing import Protocol
 
 from .models import Classification
+from .resilience import RetryPolicy, retry_sync
+
+
+def gemini_classification_schema() -> dict:
+    """Return the full Pydantic schema for Gemini's ``responseJsonSchema``."""
+
+    return Classification.model_json_schema()
 
 
 class LLMClient(Protocol):
@@ -15,23 +22,27 @@ class LLMClient(Protocol):
 class GeminiClient:
     """Adapter around the official google-genai SDK."""
 
-    def __init__(self, model: str) -> None:
+    def __init__(self, model: str, retry_policy: RetryPolicy | None = None) -> None:
         from google import genai
         from google.genai import types
 
         self.model = model
+        self.retry_policy = retry_policy or RetryPolicy()
         self._types = types
         self._client = genai.Client()
 
     def generate(self, prompt: str) -> str:
-        response = self._client.models.generate_content(
-            model=self.model,
-            contents=prompt,
-            config=self._types.GenerateContentConfig(
-                temperature=0,
-                response_mime_type="application/json",
-                response_schema=Classification,
+        response = retry_sync(
+            lambda: self._client.models.generate_content(
+                model=self.model,
+                contents=prompt,
+                config=self._types.GenerateContentConfig(
+                    temperature=0,
+                    response_mime_type="application/json",
+                    response_json_schema=gemini_classification_schema(),
+                ),
             ),
+            self.retry_policy,
         )
         text = getattr(response, "text", None)
         if not text:

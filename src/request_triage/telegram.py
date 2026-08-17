@@ -6,6 +6,7 @@ from typing import Any
 import httpx
 
 from .models import OutputDocument
+from .resilience import RetryPolicy, retry_async
 
 
 TELEGRAM_API = "https://api.telegram.org"
@@ -62,6 +63,7 @@ async def send_digest(
     bot_token: str | None = None,
     chat_id: str | None = None,
     client: Any | None = None,
+    retry_policy: RetryPolicy | None = None,
 ) -> int:
     """Send a plain-text digest; split safely under Telegram's message limit."""
 
@@ -69,6 +71,7 @@ async def send_digest(
     chat_id = chat_id or os.getenv("TELEGRAM_CHAT_ID")
     if not bot_token or not chat_id:
         raise ValueError("TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID are required")
+    retry_policy = retry_policy or RetryPolicy()
 
     own_client = client is None
     if own_client:
@@ -76,9 +79,12 @@ async def send_digest(
     try:
         sent = 0
         for text in _chunks(render_digest(document)):
-            response = await client.post(
-                f"{TELEGRAM_API}/bot{bot_token}/sendMessage",
-                json={"chat_id": chat_id, "text": text},
+            response = await retry_async(
+                lambda: client.post(
+                    f"{TELEGRAM_API}/bot{bot_token}/sendMessage",
+                    json={"chat_id": chat_id, "text": text},
+                ),
+                retry_policy,
             )
             if not response.is_success:
                 raise RuntimeError(
@@ -89,4 +95,3 @@ async def send_digest(
     finally:
         if own_client:
             await client.aclose()
-

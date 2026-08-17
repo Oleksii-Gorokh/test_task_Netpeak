@@ -11,6 +11,7 @@ from dotenv import load_dotenv
 from .csv_io import read_requests
 from .llm import GeminiClient
 from .pipeline import run_pipeline_async
+from .resilience import RetryPolicy
 from .sheets import GoogleSheetsExporter
 from .telegram import send_digest
 
@@ -23,7 +24,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--model",
         default=None,
-        help="Gemini model name (default: GEMINI_MODEL or gemini-2.5-flash-lite)",
+        help="Gemini model name (default: GEMINI_MODEL or gemini-3.1-flash-lite)",
     )
     parser.add_argument(
         "--max-attempts", type=int, default=2, help="Attempts per request (default: 2)"
@@ -31,6 +32,26 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--concurrency", type=int, default=None,
         help="Max in-flight LLM calls (default: TRIAGE_CONCURRENCY or 4)",
+    )
+    parser.add_argument(
+        "--retry-attempts", type=int, default=None,
+        help="Max attempts for transient API errors (default: RETRY_ATTEMPTS or 4)",
+    )
+    parser.add_argument(
+        "--retry-base-delay", type=float, default=None,
+        help="Initial retry delay in seconds (default: RETRY_BASE_DELAY_SECONDS or 1)",
+    )
+    parser.add_argument(
+        "--retry-max-delay", type=float, default=None,
+        help="Maximum retry delay in seconds (default: RETRY_MAX_DELAY_SECONDS or 30)",
+    )
+    parser.add_argument(
+        "--checkpoint", default=None,
+        help="Path for atomic per-request checkpoint JSON",
+    )
+    parser.add_argument(
+        "--resume", action="store_true",
+        help="Resume successful rows from --checkpoint",
     )
     parser.add_argument(
         "--google-sheet", action="store_true",
@@ -50,17 +71,35 @@ def build_parser() -> argparse.ArgumentParser:
 def main() -> int:
     load_dotenv()
     args = build_parser().parse_args()
-    model = args.model or os.getenv("GEMINI_MODEL", "gemini-2.5-flash-lite")
+    model = args.model or os.getenv("GEMINI_MODEL", "gemini-3.1-flash-lite")
     try:
         concurrency = args.concurrency or int(os.getenv("TRIAGE_CONCURRENCY", "4"))
+        retry_policy = RetryPolicy(
+            max_attempts=args.retry_attempts
+            if args.retry_attempts is not None
+            else int(os.getenv("RETRY_ATTEMPTS", "4")),
+            base_delay_seconds=(
+                args.retry_base_delay
+                if args.retry_base_delay is not None
+                else float(os.getenv("RETRY_BASE_DELAY_SECONDS", "1"))
+            ),
+            max_delay_seconds=(
+                args.retry_max_delay
+                if args.retry_max_delay is not None
+                else float(os.getenv("RETRY_MAX_DELAY_SECONDS", "30"))
+            ),
+        )
     except ValueError:
-        print("TRIAGE_CONCURRENCY must be an integer", file=sys.stderr)
+        print("Invalid concurrency or retry configuration", file=sys.stderr)
         return 2
     if args.max_attempts < 1:
         print("--max-attempts must be at least 1", file=sys.stderr)
         return 2
     if concurrency < 1:
         print("--concurrency must be at least 1", file=sys.stderr)
+        return 2
+    if args.resume and not args.checkpoint:
+        print("--resume requires --checkpoint", file=sys.stderr)
         return 2
     if not os.getenv("GEMINI_API_KEY"):
         print("GEMINI_API_KEY is not set. Copy .env.example to .env and add the key.", file=sys.stderr)
@@ -69,7 +108,7 @@ def main() -> int:
     input_path = Path(args.input)
     try:
         requests = read_requests(input_path)
-        client = GeminiClient(model=model)
+        client = GeminiClient(model=model, retry_policy=retry_policy)
 
         async def run() -> None:
             document = await run_pipeline_async(
@@ -81,6 +120,8 @@ def main() -> int:
                 report_path=args.report,
                 max_attempts=args.max_attempts,
                 concurrency=concurrency,
+                checkpoint_path=args.checkpoint,
+                resume=args.resume,
                 progress=lambda current, total: print(
                     f"Classified {current}/{total}", file=sys.stderr
                 ),
@@ -95,6 +136,7 @@ def main() -> int:
                     spreadsheet_id=spreadsheet_id,
                     tab_name=args.sheets_tab or os.getenv("GOOGLE_SHEETS_TAB", "Requests"),
                     credentials_file=args.sheets_credentials_file,
+                    retry_policy=retry_policy,
                 )
                 await asyncio.to_thread(exporter.export, document)
             if args.telegram:
@@ -102,6 +144,7 @@ def main() -> int:
                     document,
                     bot_token=args.telegram_bot_token,
                     chat_id=args.telegram_chat_id,
+                    retry_policy=retry_policy,
                 )
 
         asyncio.run(run())
