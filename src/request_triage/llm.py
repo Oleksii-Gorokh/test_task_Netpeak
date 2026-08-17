@@ -30,7 +30,7 @@ class GeminiClient:
             config=self._types.GenerateContentConfig(
                 temperature=0,
                 response_mime_type="application/json",
-                response_schema=Classification.model_json_schema(),
+                response_schema=Classification,
             ),
         )
         text = getattr(response, "text", None)
