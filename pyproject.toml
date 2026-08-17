@@ -1,0 +1,16 @@
+[project]
+name = "request-triage"
+version = "0.1.0"
+description = "LLM-assisted triage for internal requests"
+requires-python = ">=3.11"
+dependencies = [
+  "google-genai>=1.30,<2",
+  "pydantic>=2.7,<3",
+  "python-dotenv>=1.0,<2",
+]
+
+[project.scripts]
+request-triage = "request_triage.cli:main"
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
