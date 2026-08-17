@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import Protocol
 
 from .models import Classification
-from .resilience import RetryPolicy, retry_sync
+from .resilience import RateLimiter, RetryPolicy, retry_sync
 
 
 def gemini_classification_schema() -> dict:
@@ -22,18 +22,25 @@ class LLMClient(Protocol):
 class GeminiClient:
     """Adapter around the official google-genai SDK."""
 
-    def __init__(self, model: str, retry_policy: RetryPolicy | None = None) -> None:
+    def __init__(
+        self,
+        model: str,
+        retry_policy: RetryPolicy | None = None,
+        rate_limiter: RateLimiter | None = None,
+    ) -> None:
         from google import genai
         from google.genai import types
 
         self.model = model
         self.retry_policy = retry_policy or RetryPolicy()
+        self.rate_limiter = rate_limiter or RateLimiter()
         self._types = types
         self._client = genai.Client()
 
     def generate(self, prompt: str) -> str:
-        response = retry_sync(
-            lambda: self._client.models.generate_content(
+        def request():
+            self.rate_limiter.wait()
+            return self._client.models.generate_content(
                 model=self.model,
                 contents=prompt,
                 config=self._types.GenerateContentConfig(
@@ -41,7 +48,10 @@ class GeminiClient:
                     response_mime_type="application/json",
                     response_json_schema=gemini_classification_schema(),
                 ),
-            ),
+            )
+
+        response = retry_sync(
+            request,
             self.retry_policy,
         )
         text = getattr(response, "text", None)

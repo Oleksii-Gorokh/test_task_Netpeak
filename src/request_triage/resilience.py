@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import random
 import re
+import threading
 import time
 from dataclasses import dataclass
 from typing import Any, Awaitable, Callable, TypeVar
@@ -10,6 +11,27 @@ from typing import Any, Awaitable, Callable, TypeVar
 
 T = TypeVar("T")
 RETRYABLE_STATUS_CODES = {408, 425, 429, 500, 502, 503, 504}
+
+
+class RateLimiter:
+    """Thread-safe minimum interval between outbound requests."""
+
+    def __init__(self, min_interval_seconds: float = 4.0) -> None:
+        if min_interval_seconds < 0:
+            raise ValueError("min_interval_seconds cannot be negative")
+        self.min_interval_seconds = min_interval_seconds
+        self._lock = threading.Lock()
+        self._next_allowed = 0.0
+
+    def wait(self) -> None:
+        if self.min_interval_seconds == 0:
+            return
+        with self._lock:
+            now = time.monotonic()
+            delay = max(0.0, self._next_allowed - now)
+            self._next_allowed = max(now, self._next_allowed) + self.min_interval_seconds
+        if delay:
+            time.sleep(delay)
 
 
 @dataclass(frozen=True)

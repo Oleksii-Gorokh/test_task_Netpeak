@@ -68,3 +68,17 @@ def test_checkpoint_rejects_different_input(tmp_path):
     with pytest.raises(ValueError, match="does not match"):
         CheckpointStore(path, changed, "input.csv", "test-model", resume=True)
 
+
+def test_resume_requires_existing_checkpoint(tmp_path):
+    with pytest.raises(ValueError, match="Checkpoint not found"):
+        CheckpointStore(
+            tmp_path / "missing.json", requests(), "input.csv", "test-model", resume=True
+        )
+
+
+def test_checkpoint_rejects_non_object_json(tmp_path):
+    path = tmp_path / "broken.json"
+    path.write_text("[]", encoding="utf-8")
+
+    with pytest.raises(ValueError, match="JSON object"):
+        CheckpointStore(path, requests(), "input.csv", "test-model", resume=True)

@@ -33,7 +33,9 @@ class CheckpointStore:
         self.source_file = source_file
         self.model = model
         self.results: dict[str, ClassifiedRequest] = {}
-        if resume and self.path.exists():
+        if resume:
+            if not self.path.exists():
+                raise ValueError(f"Checkpoint not found: {self.path}")
             self._load()
 
     @property
@@ -49,6 +51,8 @@ class CheckpointStore:
             payload: Any = json.loads(self.path.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError) as exc:
             raise ValueError(f"Cannot read checkpoint {self.path}: {exc}") from exc
+        if not isinstance(payload, dict):
+            raise ValueError(f"Checkpoint must contain a JSON object: {self.path}")
 
         expected = {
             "checkpoint_version": CHECKPOINT_VERSION,
@@ -68,10 +72,14 @@ class CheckpointStore:
 
         try:
             raw_results = payload.get("results", {})
+            if not isinstance(raw_results, dict):
+                raise ValueError("results must be a JSON object")
             self.results = {
                 request_id: ClassifiedRequest.model_validate(result)
                 for request_id, result in raw_results.items()
             }
+            if any(request_id != result.id for request_id, result in self.results.items()):
+                raise ValueError("checkpoint result key does not match result.id")
         except (AttributeError, TypeError, ValueError) as exc:
             raise ValueError(f"Checkpoint contains invalid results: {exc}") from exc
 
@@ -94,4 +102,3 @@ class CheckpointStore:
             encoding="utf-8",
         )
         temporary.replace(self.path)
-

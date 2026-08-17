@@ -1,6 +1,6 @@
 import asyncio
 
-from request_triage.resilience import RetryPolicy, retry_async, retry_sync
+from request_triage.resilience import RateLimiter, RetryPolicy, retry_async, retry_sync
 
 
 class Response:
@@ -64,3 +64,12 @@ def test_retry_sync_uses_server_delay_from_exception():
 
     assert result.status_code == 200
     assert delays == [3.5]
+
+
+def test_rate_limiter_rejects_negative_interval():
+    try:
+        RateLimiter(-1)
+    except ValueError as exc:
+        assert "cannot be negative" in str(exc)
+    else:
+        raise AssertionError("negative interval should fail validation")

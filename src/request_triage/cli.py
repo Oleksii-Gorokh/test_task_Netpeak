@@ -11,7 +11,7 @@ from dotenv import load_dotenv
 from .csv_io import read_requests
 from .llm import GeminiClient
 from .pipeline import run_pipeline_async
-from .resilience import RetryPolicy
+from .resilience import RateLimiter, RetryPolicy
 from .sheets import GoogleSheetsExporter
 from .telegram import send_digest
 
@@ -44,6 +44,10 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--retry-max-delay", type=float, default=None,
         help="Maximum retry delay in seconds (default: RETRY_MAX_DELAY_SECONDS or 30)",
+    )
+    parser.add_argument(
+        "--min-interval", type=float, default=None,
+        help="Minimum seconds between Gemini requests (default: GEMINI_MIN_INTERVAL_SECONDS or 4)",
     )
     parser.add_argument(
         "--checkpoint", default=None,
@@ -89,6 +93,12 @@ def main() -> int:
                 else float(os.getenv("RETRY_MAX_DELAY_SECONDS", "30"))
             ),
         )
+        min_interval = (
+            args.min_interval
+            if args.min_interval is not None
+            else float(os.getenv("GEMINI_MIN_INTERVAL_SECONDS", "4"))
+        )
+        rate_limiter = RateLimiter(min_interval)
     except ValueError:
         print("Invalid concurrency or retry configuration", file=sys.stderr)
         return 2
@@ -108,7 +118,11 @@ def main() -> int:
     input_path = Path(args.input)
     try:
         requests = read_requests(input_path)
-        client = GeminiClient(model=model, retry_policy=retry_policy)
+        client = GeminiClient(
+            model=model,
+            retry_policy=retry_policy,
+            rate_limiter=rate_limiter,
+        )
 
         async def run() -> None:
             document = await run_pipeline_async(

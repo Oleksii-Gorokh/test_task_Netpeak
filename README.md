@@ -56,6 +56,8 @@ Transient API-помилки та rate limit (429/5xx) повторюються 
 backoff, jitter і підтримкою `Retry-After`. Параметри задаються через
 `RETRY_ATTEMPTS`, `RETRY_BASE_DELAY_SECONDS`, `RETRY_MAX_DELAY_SECONDS` або
 відповідні CLI-прапорці.
+Між стартами Gemini-викликів за замовчуванням витримується 4 секунди; це можна
+змінити через `GEMINI_MIN_INTERVAL_SECONDS` або `--min-interval`.
 
 Або явно:
 
@@ -168,8 +170,8 @@ pytest -m live -q
 ```
 
 Gemini-тест використовує `GEMINI_API_KEY` і робить один реальний запит.
-Google Sheets і Telegram-тести додатково запускаються лише коли задані їхні
-credentials та target-конфігурація.
+Google Sheets-тест додатково вимагає окремі `LIVE_GOOGLE_SHEETS_*` змінні та
+цільову тестову таблицю, Telegram — `TELEGRAM_*` credentials.
 
 ## Обмеження та наступні кроки
 

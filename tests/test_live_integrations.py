@@ -64,14 +64,20 @@ def live_document() -> OutputDocument:
 
 @pytest.mark.skipif(
     not live_enabled()
-    or not os.getenv("GOOGLE_SHEETS_SPREADSHEET_ID")
-    or not (os.getenv("GOOGLE_SERVICE_ACCOUNT_FILE") or os.getenv("GOOGLE_SERVICE_ACCOUNT_JSON")),
-    reason="Set live-test flag, Sheets spreadsheet ID and service-account credentials",
+    or not os.getenv("LIVE_GOOGLE_SHEETS_SPREADSHEET_ID")
+    or not os.getenv("LIVE_GOOGLE_SHEETS_TAB")
+    or not (
+        os.getenv("LIVE_GOOGLE_SERVICE_ACCOUNT_FILE")
+        or os.getenv("LIVE_GOOGLE_SERVICE_ACCOUNT_JSON")
+    ),
+    reason="Set live flag, LIVE_GOOGLE_SHEETS_* target and LIVE_GOOGLE_SERVICE_ACCOUNT_* credentials",
 )
 def test_live_google_sheets_write():
     rows = GoogleSheetsExporter(
-        spreadsheet_id=os.environ["GOOGLE_SHEETS_SPREADSHEET_ID"],
-        tab_name=os.getenv("GOOGLE_SHEETS_TAB", "Requests"),
+        spreadsheet_id=os.environ["LIVE_GOOGLE_SHEETS_SPREADSHEET_ID"],
+        tab_name=os.environ["LIVE_GOOGLE_SHEETS_TAB"],
+        credentials_file=os.getenv("LIVE_GOOGLE_SERVICE_ACCOUNT_FILE"),
+        credentials_json=os.getenv("LIVE_GOOGLE_SERVICE_ACCOUNT_JSON"),
         retry_policy=RetryPolicy(max_attempts=3, base_delay_seconds=1, max_delay_seconds=8),
     ).export(live_document())
     assert rows == 1
@@ -89,4 +95,3 @@ def test_live_telegram_digest():
         )
     )
     assert sent >= 1
-
